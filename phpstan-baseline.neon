@@ -55,6 +55,30 @@ parameters:
 			path: src/Console/TestSuite/ConsoleIntegrationTestTrait.php
 
 		-
+			message: '#^Parameter \#1 \$callback of function call_user_func_array expects callable\(\)\: mixed, array\{object, mixed\} given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Container/Definition/Definition.php
+
+		-
+			message: '#^Parameter \#1 \$objectOrClass of class ReflectionClass constructor expects class\-string\<T of object\>\|T of object, string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Container/Definition/Definition.php
+
+		-
+			message: '#^Parameter \#1 \$callback of function call_user_func_array expects callable\(\)\: mixed, array\{object, \(int\|string\)\} given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Container/Inflector/Inflector.php
+
+		-
+			message: '#^Parameter \#1 \$objectOrClass of class ReflectionClass constructor expects class\-string\<T of object\>\|T of object, string given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Container/ReflectionContainer.php
+
+		-
 			message: '#^Call to an undefined method ReflectionType\:\:getName\(\)\.$#'
 			identifier: method.notFound
 			count: 1

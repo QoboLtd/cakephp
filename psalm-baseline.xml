@@ -34,6 +34,16 @@
       <code><![CDATA[$this->_output]]></code>
     </InvalidPropertyAssignmentValue>
   </file>
+  <file src="src/Container/Container.php">
+    <MoreSpecificImplementedParamType>
+      <code><![CDATA[$id]]></code>
+    </MoreSpecificImplementedParamType>
+  </file>
+  <file src="src/Container/ContainerAwareTrait.php">
+    <LessSpecificImplementedReturnType>
+      <code><![CDATA[ContainerAwareInterface]]></code>
+    </LessSpecificImplementedReturnType>
+  </file>
   <file src="src/Controller/ControllerFactory.php">
     <UndefinedMethod>
       <code><![CDATA[getName]]></code>
