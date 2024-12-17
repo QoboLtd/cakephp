@@ -115,7 +115,10 @@
             "Company\\TestPluginThree\\": "tests/test_app/Plugin/Company/TestPluginThree/src/",
             "Company\\TestPluginThree\\Test\\": "tests/test_app/Plugin/Company/TestPluginThree/tests/",
             "Named\\": "tests/test_app/Plugin/Named/src/"
-        }
+        },
+        "files": [
+            "tests/TestCase/Container/Asset/function.php"
+        ]
     },
     "scripts": {
         "check": [
