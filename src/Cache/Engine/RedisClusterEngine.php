@@ -43,6 +43,7 @@ class RedisClusterEngine extends CacheEngine
      * - `read_timeout` Read timeout.
      * - `tls` Whether to use TLS
      * - `duration` Specify how long items in this cache configuration last.
+     * - `failover` Failover mode (distribute,distribute_slaves,error,none)
      * - `groups` List of groups or 'tags' associated to every key stored in this config.
      *    handy for deleting a complete group from cache.
      * - `persistent` Connect to the Redis server with a persistent connection
@@ -108,6 +109,18 @@ class RedisClusterEngine extends CacheEngine
             // See: https://github.com/phpredis/phpredis/commit/8144db374338006a316beb11549f37926bd40c5d
             $this->_config['tls'] === true ? [] : null,
         );
+
+        $failover = match ($this->_config['failover']) {
+            'distribute' => RedisCluster::FAILOVER_DISTRIBUTE,
+            'distribute_slaves' => RedisCluster::FAILOVER_DISTRIBUTE_SLAVES,
+            'error' => RedisCluster::FAILOVER_ERROR,
+            'none' => RedisCluster::FAILOVER_NONE,
+            default => null,
+        };
+
+        if ($failover !== null) {
+            $this->_Redis->setOption(RedisCluster::OPT_SLAVE_FAILOVER, $failover);
+        }
     }
 
     /**
