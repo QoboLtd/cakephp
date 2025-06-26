@@ -216,7 +216,6 @@ class RedisEngine extends CacheEngine
      */
     protected function scan(string $pattern): Generator
     {
-        $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
         $iterator = null;
         while (true) {
             $keys = $this->_Redis->scan($iterator, $pattern, (int)$this->_config['scanCount']);
