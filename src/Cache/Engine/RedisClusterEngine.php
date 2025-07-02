@@ -61,6 +61,7 @@ class RedisClusterEngine extends CacheEngine
     protected array $_defaultConfig = [
         'cluster' => null,
         'seeds' => [],
+        'failover' => null,
         'read_timeout' => 0,
         'auth' => null,
         'persistent' => true,
