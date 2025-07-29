@@ -211,11 +211,12 @@ class RedisEngine extends CacheEngine
     }
 
     /**
-     * @param string $pattern Pattern to scaen
-     * @return \Generator<array>
+     * @param string $pattern Pattern to scan
+     * @return \Generator<string>
      */
     protected function scan(string $pattern): Generator
     {
+        $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
         $iterator = null;
         while (true) {
             $keys = $this->_Redis->scan($iterator, $pattern, (int)$this->_config['scanCount']);
@@ -223,7 +224,9 @@ class RedisEngine extends CacheEngine
                 break;
             }
 
-            yield $keys;
+            foreach ($keys as $key) {
+                yield $key;
+            }
         }
     }
 

@@ -21,6 +21,7 @@ use Cake\Cache\CacheEngine;
 use Cake\Core\Exception\CakeException;
 use Cake\Log\Log;
 use Generator;
+use Redis;
 use RedisCluster;
 use RedisClusterException;
 
@@ -145,11 +146,12 @@ class RedisClusterEngine extends CacheEngine
     }
 
     /**
-     * @param string $pattern Pattern to scaen
-     * @return \Generator<array>
+     * @param string $pattern Pattern to scan
+     * @return \Generator<string>
      */
     protected function scan(string $pattern): Generator
     {
+        $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
         $iterator = null;
         foreach ($this->_Redis->_masters() as $node) {
             while (true) {
@@ -159,7 +161,9 @@ class RedisClusterEngine extends CacheEngine
                     break;
                 }
 
-                yield $keys;
+                foreach ($keys as $key) {
+                    yield $key;
+                }
             }
         }
     }

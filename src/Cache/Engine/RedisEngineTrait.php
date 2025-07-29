@@ -153,16 +153,12 @@ trait RedisEngineTrait
             return true;
         }
 
-        $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
-
         $isAllDeleted = true;
         $pattern = $this->_config['prefix'] . '*';
 
-        foreach ($this->scan($pattern) as $keys) {
-            foreach ($keys as $key) {
-                $isDeleted = $this->unlink($key);
-                $isAllDeleted = $isAllDeleted && $isDeleted;
-            }
+        foreach ($this->scan($pattern) as $key) {
+            $isDeleted = $this->unlink($key);
+            $isAllDeleted = $isAllDeleted && $isDeleted;
         }
 
         return $isAllDeleted;
@@ -194,16 +190,12 @@ trait RedisEngineTrait
             return true;
         }
 
-        $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
-
         $isAllDeleted = true;
         $pattern = $this->_config['prefix'] . '*';
 
-        foreach ($this->scan($pattern) as $keys) {
-            foreach ($keys as $key) {
-                $isDeleted = ((int)$this->_Redis->del($key) > 0);
-                $isAllDeleted = $isAllDeleted && $isDeleted;
-            }
+        foreach ($this->scan($pattern) as $key) {
+            $isDeleted = ((int)$this->_Redis->del($key) > 0);
+            $isAllDeleted = $isAllDeleted && $isDeleted;
         }
 
         return $isAllDeleted;
