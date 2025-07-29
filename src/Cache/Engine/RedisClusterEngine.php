@@ -152,8 +152,8 @@ class RedisClusterEngine extends CacheEngine
     protected function scan(string $pattern): Generator
     {
         $this->_Redis->setOption(Redis::OPT_SCAN, (string)Redis::SCAN_RETRY);
-        $iterator = null;
         foreach ($this->_Redis->_masters() as $node) {
+            $iterator = null;
             while (true) {
                 // @phpstan-ignore arguments.count, argument.type
                 $keys = $this->_Redis->scan($iterator, $node, $pattern, (int)$this->_config['scanCount']);
