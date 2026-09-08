@@ -185,8 +185,9 @@ class ResultSetFactory
             $instance = $assoc['instance'];
             assert($instance instanceof Association);
 
+            $sourceAlias = $assoc['sourceAlias'] ?? null;
             if (!$canBeJoined && !isset($row[$alias])) {
-                $results = $instance->defaultRowValue($results, $canBeJoined);
+                $results = $instance->defaultRowValue($results, $canBeJoined, $sourceAlias);
                 continue;
             }
 
@@ -217,7 +218,13 @@ class ResultSetFactory
                 $results[$alias] = $entity;
             }
 
-            $results = $instance->transformRow($results, $alias, $assoc['canBeJoined'], $assoc['targetProperty']);
+            $results = $instance->transformRow(
+                $results,
+                $alias,
+                $assoc['canBeJoined'],
+                $assoc['targetProperty'],
+                $sourceAlias,
+            );
         }
 
         foreach ($presentAliases as $alias => $present) {
