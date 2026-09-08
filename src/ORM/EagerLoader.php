@@ -272,9 +272,9 @@ class EagerLoader
     /**
      * Returns the eager loader used for `matching` associations, creating it if required.
      *
-     * @return \Cake\ORM\EagerLoader
+     * @return self
      */
-    protected function _matchingLoader(): EagerLoader
+    protected function _matchingLoader(): self
     {
         if ($this->_matching === null) {
             $this->_matching = new static();

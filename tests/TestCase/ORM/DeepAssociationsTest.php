@@ -215,7 +215,7 @@ class DeepAssociationsTest extends TestCase
     public function testBeforeFindConditionsAreRewritten(): void
     {
         $profiles = $this->getTableLocator()->get('Profiles');
-        $profiles->getEventManager()->on('Model.beforeFind', function ($event, SelectQuery $query) {
+        $profiles->getEventManager()->on('Model.beforeFind', function ($event, SelectQuery $query): void {
             $query->where(['Profiles.first_name !=' => 'nate']);
         });
 
