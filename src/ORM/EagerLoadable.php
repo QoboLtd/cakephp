@@ -113,6 +113,26 @@ class EagerLoadable
     protected ?string $_targetProperty = null;
 
     /**
+     * The alias under which this association is joined in the generated query.
+     *
+     * By default this is the association name. When deep associations are
+     * enabled (see `Database.deepAssociations`) nested associations are aliased
+     * using their full association path (e.g. `Creator_Contacts`) so that the
+     * same association can be joined through different paths.
+     *
+     * @var string|null
+     */
+    protected ?string $_queryAlias = null;
+
+    /**
+     * The alias under which the source (parent) table of this association
+     * appears in the generated query.
+     *
+     * @var string|null
+     */
+    protected ?string $_sourceAlias = null;
+
+    /**
      * Constructor. The $config parameter accepts the following array
      * keys:
      *
@@ -124,6 +144,8 @@ class EagerLoadable
      * - propertyPath
      * - forMatching
      * - targetProperty
+     * - queryAlias
+     * - sourceAlias
      *
      * The keys maps to the settable properties in this class.
      *
@@ -136,6 +158,7 @@ class EagerLoadable
         $allowed = [
             'associations', 'instance', 'config', 'canBeJoined',
             'aliasPath', 'propertyPath', 'forMatching', 'targetProperty',
+            'queryAlias', 'sourceAlias',
         ];
         foreach ($allowed as $property) {
             if (isset($config[$property])) {
@@ -190,6 +213,29 @@ class EagerLoadable
     public function aliasPath(): string
     {
         return $this->_aliasPath;
+    }
+
+    /**
+     * Gets the alias under which this association is joined in the generated query.
+     *
+     * Defaults to the association name.
+     *
+     * @return string
+     */
+    public function queryAlias(): string
+    {
+        return $this->_queryAlias ?? $this->_name;
+    }
+
+    /**
+     * Gets the alias under which the source (parent) table of this association
+     * appears in the generated query, or null when unknown.
+     *
+     * @return string|null
+     */
+    public function sourceAlias(): ?string
+    {
+        return $this->_sourceAlias;
     }
 
     /**
