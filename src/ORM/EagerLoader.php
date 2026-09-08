@@ -16,6 +16,7 @@ declare(strict_types=1);
  */
 namespace Cake\ORM;
 
+use Cake\Core\Configure;
 use Cake\ORM\Query\SelectQuery;
 use Closure;
 use InvalidArgumentException;
@@ -101,6 +102,17 @@ class EagerLoader
      * @var bool
      */
     protected bool $_autoFields = true;
+
+    /**
+     * Whether nested associations should be joined using aliases derived from
+     * their full association path instead of the plain association name.
+     *
+     * When null, the value is read from the `Database.deepAssociations`
+     * configuration key.
+     *
+     * @var bool|null
+     */
+    protected ?bool $_deepAssociations = null;
 
     /**
      * Sets the list of associations that should be eagerly loaded along for a
@@ -220,6 +232,59 @@ class EagerLoader
     }
 
     /**
+     * Sets whether nested associations are joined using aliases derived from their
+     * full association path.
+     *
+     * When enabled, an association contained through a path like `Creator.Contacts`
+     * is joined as `Creator_Contacts` instead of `Contacts`. This allows the same
+     * association to be joined multiple times through different paths (for
+     * example `Creator.Contacts` and `Modifier.Contacts`) without alias conflicts.
+     *
+     * Top level associations keep using their association name as alias.
+     *
+     * The default value is read from the `Database.deepAssociations` configuration key.
+     *
+     * @param bool $enable Whether to enable deep association aliases.
+     * @return $this
+     */
+    public function setDeepAssociations(bool $enable)
+    {
+        $this->_deepAssociations = $enable;
+        $this->_normalized = null;
+        $this->_loadExternal = [];
+        $this->_aliasList = [];
+        $this->_matching?->setDeepAssociations($enable);
+
+        return $this;
+    }
+
+    /**
+     * Gets whether nested associations are joined using aliases derived from
+     * their full association path.
+     *
+     * @return bool
+     */
+    public function isDeepAssociationsEnabled(): bool
+    {
+        return $this->_deepAssociations ??= (bool)Configure::read('Database.deepAssociations');
+    }
+
+    /**
+     * Returns the eager loader used for `matching` associations, creating it if required.
+     *
+     * @return \Cake\ORM\EagerLoader
+     */
+    protected function _matchingLoader(): EagerLoader
+    {
+        if ($this->_matching === null) {
+            $this->_matching = new static();
+            $this->_matching->_deepAssociations = $this->_deepAssociations;
+        }
+
+        return $this->_matching;
+    }
+
+    /**
      * Adds a new association to the list that will be used to filter the results of
      * any given query based on the results of finding records for that association.
      * You can pass a dot separated path of associations to this method as its first
@@ -240,7 +305,7 @@ class EagerLoader
      */
     public function setMatching(string $associationPath, ?Closure $builder = null, array $options = [])
     {
-        $this->_matching ??= new static();
+        $this->_matchingLoader();
 
         $options += ['joinType' => SelectQuery::JOIN_TYPE_INNER];
         $sharedOptions = ['negateMatch' => false, 'matching' => true] + $options;
@@ -259,7 +324,7 @@ class EagerLoader
 
         // Add all options to target association contain which is the last in nested chain
         $nested = ['matching' => true, 'queryBuilder' => $builder ?? fn($q) => $q] + $options;
-        $this->_matching->contain($contains);
+        $this->_matchingLoader()->contain($contains);
 
         return $this;
     }
@@ -271,9 +336,7 @@ class EagerLoader
      */
     public function getMatching(): array
     {
-        $this->_matching ??= new static();
-
-        return $this->_matching->getContain();
+        return $this->_matchingLoader()->getContain();
     }
 
     /**
@@ -304,7 +367,7 @@ class EagerLoader
                 $repository,
                 $alias,
                 $options,
-                ['root' => ''],
+                ['root' => '', 'sourceAlias' => $repository->getAlias(), 'joinPath' => ''],
             );
         }
 
@@ -422,6 +485,8 @@ class EagerLoader
                     'aliasPath' => $loadable->aliasPath(),
                     'propertyPath' => $loadable->propertyPath(),
                     'includeFields' => $includeFields,
+                    'alias' => $loadable->queryAlias(),
+                    'sourceAlias' => $loadable->sourceAlias(),
                 ];
                 $loadable->instance()->attachTo($query, $config);
                 $processed[$alias] = true;
@@ -477,10 +542,13 @@ class EagerLoader
      * @param \Cake\ORM\Table $parent Owning side of the association.
      * @param string $alias Name of the association to be loaded.
      * @param array<string, mixed> $options List of extra options to use for this association.
-     * @param array<string, mixed> $paths An array with two values, the first one is a list of dot
-     * separated strings representing associations that lead to this `$alias` in the
-     * chain of associations to be loaded. The second value is the path to follow in
-     * entities' properties to fetch a record of the corresponding association.
+     * @param array<string, mixed> $paths An array with the following keys: `aliasPath`, a dot
+     * separated string representing associations that lead to this `$alias` in the chain of
+     * associations to be loaded; `propertyPath`, the path to follow in entities' properties to
+     * fetch a record of the corresponding association; `root`, the closest ancestor that is
+     * loaded with a separate query; `sourceAlias`, the alias under which the parent table
+     * appears in the query; `joinPath`, the dot separated path of associations joined in the
+     * same query that lead to this `$alias`.
      * @return \Cake\ORM\EagerLoadable Object with normalized associations
      * @throws \InvalidArgumentException When containments refer to associations that do not exist.
      */
@@ -489,14 +557,26 @@ class EagerLoader
         $defaults = $this->_containOptions;
         $instance = $parent->getAssociation($alias);
 
-        $paths += ['aliasPath' => '', 'propertyPath' => '', 'root' => $alias];
+        $paths += [
+            'aliasPath' => '',
+            'propertyPath' => '',
+            'root' => $alias,
+            'sourceAlias' => $parent->getAlias(),
+            'joinPath' => '',
+        ];
         $paths['aliasPath'] .= '.' . $alias;
+        $paths['joinPath'] = trim($paths['joinPath'] . '.' . $alias, '.');
+
+        $queryAlias = $alias;
+        if ($this->isDeepAssociationsEnabled() && str_contains($paths['joinPath'], '.')) {
+            $queryAlias = static::deepAlias($paths['joinPath']);
+        }
 
         if (
             isset($options['matching']) &&
             $options['matching'] === true
         ) {
-            $paths['propertyPath'] = '_matchingData.' . $alias;
+            $paths['propertyPath'] = '_matchingData.' . $queryAlias;
         } else {
             $paths['propertyPath'] .= '.' . $instance->getProperty();
         }
@@ -511,6 +591,8 @@ class EagerLoader
             'aliasPath' => trim($paths['aliasPath'], '.'),
             'propertyPath' => trim($paths['propertyPath'], '.'),
             'targetProperty' => $instance->getProperty(),
+            'queryAlias' => $queryAlias,
+            'sourceAlias' => $paths['sourceAlias'],
         ];
         $config['canBeJoined'] = $instance->canBeJoined($config['config']);
         $eagerLoadable = new EagerLoadable($alias, $config);
@@ -519,7 +601,12 @@ class EagerLoader
             $this->_aliasList[$paths['root']][$alias][] = $eagerLoadable;
         } else {
             $paths['root'] = $config['aliasPath'];
+            // Associations below this one are loaded with a separate query
+            // on the target table, where this association is the main table.
+            $paths['joinPath'] = '';
+            $queryAlias = $table->getAlias();
         }
+        $paths['sourceAlias'] = $queryAlias;
 
         foreach ($extra as $t => $assoc) {
             $eagerLoadable->addAssociation(
@@ -529,6 +616,21 @@ class EagerLoader
         }
 
         return $eagerLoadable;
+    }
+
+    /**
+     * Returns the query alias to use for a nested association when deep
+     * associations are enabled.
+     *
+     * The alias is built from the dot separated path of joined associations that
+     * lead to it, e.g. `Creator.Contacts` becomes `Creator_Contacts`.
+     *
+     * @param string $joinPath Dot separated path of joined associations.
+     * @return string
+     */
+    public static function deepAlias(string $joinPath): string
+    {
+        return str_replace('.', '_', $joinPath);
     }
 
     /**
@@ -542,6 +644,12 @@ class EagerLoader
      */
     protected function _fixStrategies(): void
     {
+        if ($this->isDeepAssociationsEnabled()) {
+            // Nested associations get unique aliases derived from their path,
+            // so there is nothing to fix.
+            return;
+        }
+
         foreach ($this->_aliasList as $aliases) {
             foreach ($aliases as $configs) {
                 if (count($configs) < 2) {
@@ -588,14 +696,14 @@ class EagerLoader
     protected function _resolveJoins(array $associations, array $matching = []): array
     {
         $result = [];
-        foreach ($matching as $table => $loadable) {
-            $result[$table] = $loadable;
+        foreach ($matching as $loadable) {
+            $result[$loadable->queryAlias()] = $loadable;
             $result = $this->mergeJoins($result, $this->_resolveJoins($loadable->associations(), []));
         }
         foreach ($associations as $table => $loadable) {
             $inMatching = isset($matching[$table]);
             if (!$inMatching && $loadable->canBeJoined()) {
-                $result[$table] = $loadable;
+                $result[$loadable->queryAlias()] = $loadable;
                 $result = $this->mergeJoins($result, $this->_resolveJoins($loadable->associations(), []));
                 continue;
             }
@@ -669,7 +777,7 @@ class EagerLoader
             $contain = $meta->associations();
             $instance = $meta->instance();
             $config = $meta->getConfig();
-            $alias = $instance->getSource()->getAlias();
+            $alias = $meta->sourceAlias() ?? $instance->getSource()->getAlias();
             $path = $meta->aliasPath();
 
             $requiresKeys = $instance->requiresKeys($config);
@@ -699,6 +807,7 @@ class EagerLoader
                     'contain' => $contain,
                     'keys' => $keys,
                     'nestKey' => $meta->aliasPath(),
+                    'sourceAlias' => $alias,
                 ],
             );
             $results = array_map($callback, $results);
@@ -711,12 +820,14 @@ class EagerLoader
      * Returns an array having as keys a dotted path of associations that participate
      * in this eager loader. The values of the array will contain the following keys:
      *
-     * - `alias`: The association alias
+     * - `alias`: The alias the association is joined with in the query
      * - `instance`: The association instance
      * - `canBeJoined`: Whether the association will be loaded using a JOIN
      * - `entityClass`: The entity that should be used for hydrating the results
      * - `nestKey`: A dotted path that can be used to correctly insert the data into the results.
      * - `matching`: Whether it is an association loaded through `matching()`.
+     * - `targetProperty`: The property name where the association results are nested.
+     * - `sourceAlias`: The alias of the source table in the query, or null if it is the default one.
      *
      * @param \Cake\ORM\Table $table The table containing the association that
      * will be normalized.
@@ -749,19 +860,21 @@ class EagerLoader
      */
     protected function _buildAssociationsMap(array $map, array $level, bool $matching = false): array
     {
-        foreach ($level as $assoc => $meta) {
+        foreach ($level as $meta) {
             $canBeJoined = $meta->canBeJoined();
             $instance = $meta->instance();
             $associations = $meta->associations();
             $forMatching = $meta->forMatching();
+            $queryAlias = $meta->queryAlias();
             $map[] = [
-                'alias' => $assoc,
+                'alias' => $queryAlias,
                 'instance' => $instance,
                 'canBeJoined' => $canBeJoined,
                 'entityClass' => $instance->getTarget()->getEntityClass(),
-                'nestKey' => $canBeJoined ? $assoc : $meta->aliasPath(),
+                'nestKey' => $canBeJoined ? $queryAlias : $meta->aliasPath(),
                 'matching' => $forMatching ?? $matching,
                 'targetProperty' => $meta->targetProperty(),
+                'sourceAlias' => $meta->sourceAlias(),
             ];
             if ($canBeJoined && $associations) {
                 $map = $this->_buildAssociationsMap($map, $associations, $matching);
@@ -793,6 +906,7 @@ class EagerLoader
     ): void {
         $this->_joinsMap[$alias] = new EagerLoadable($alias, [
             'aliasPath' => $alias,
+            'queryAlias' => $alias,
             'instance' => $assoc,
             'canBeJoined' => true,
             'forMatching' => $asMatching,
@@ -855,12 +969,11 @@ class EagerLoader
                 continue;
             }
 
-            $source = $instance->getSource();
             $keys = $instance->type() === Association::MANY_TO_ONE ?
                 (array)$instance->getForeignKey() :
                 (array)$instance->getBindingKey();
 
-            $alias = $source->getAlias();
+            $alias = $meta->sourceAlias() ?? $instance->getSource()->getAlias();
             $pkFields = [];
             /** @var string $key */
             foreach ($keys as $key) {
