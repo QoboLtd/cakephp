@@ -20,6 +20,7 @@ use Cake\Collection\CollectionInterface;
 use Cake\Core\App;
 use Cake\Core\ConventionsTrait;
 use Cake\Database\Exception\DatabaseException;
+use Cake\Database\Expression\FieldInterface;
 use Cake\Database\Expression\IdentifierExpression;
 use Cake\Database\Expression\QueryExpression;
 use Cake\Database\ExpressionInterface;
@@ -695,6 +696,10 @@ abstract class Association
      * - joinType: The SQL join type to use in the query.
      * - negateMatch: Will append a condition to the passed query for excluding matches.
      *   with this association.
+     * - alias: The alias to join the target table with. Defaults to the association name.
+     *   Conditions and fields referencing the target table alias are rewritten to use it.
+     * - sourceAlias: The alias under which the source table appears in the query.
+     *   Defaults to the source table alias.
      *
      * @param \Cake\ORM\Query\SelectQuery<\Cake\Datasource\EntityInterface|array> $query the query to be altered to include the target table data
      * @param array<string, mixed> $options Any extra options or overrides to be taken into account
@@ -715,6 +720,8 @@ abstract class Association
             'table' => $table,
             'finder' => $this->getFinder(),
         ];
+        $options['alias'] ??= $this->_name;
+        $options['sourceAlias'] ??= $this->getSource()->getAlias();
 
         // This is set by joinWith to disable matching results
         if ($options['fields'] === false) {
@@ -759,9 +766,14 @@ abstract class Association
         $dummy->where($options['conditions']);
         $this->_dispatchBeforeFind($dummy);
 
-        $query->join([$this->_name => [
+        $conditions = $dummy->clause('where');
+        if ($conditions instanceof ExpressionInterface) {
+            $this->_rewriteAliases($conditions, $this->_aliasMap($query, $dummy, $options));
+        }
+
+        $query->join([$options['alias'] => [
             'table' => $options['table'],
-            'conditions' => $dummy->clause('where'),
+            'conditions' => $conditions,
             'type' => $options['joinType'],
         ]]);
 
@@ -783,7 +795,8 @@ abstract class Association
     {
         $target = $this->getTarget();
         if (!empty($options['negateMatch'])) {
-            $primaryKey = $query->aliasFields((array)$target->getPrimaryKey(), $this->_name);
+            $alias = $options['alias'] ?? $this->_name;
+            $primaryKey = $query->aliasFields((array)$target->getPrimaryKey(), $alias);
             $query->andWhere(function ($exp) use ($primaryKey) {
                 /** @var callable $callable */
                 $callable = [$exp, 'isNull'];
@@ -805,11 +818,18 @@ abstract class Association
      *   with this association
      * @param string|null $targetProperty The property name in the source results where the association
      * data should be nested in. Will use the default one if not provided.
+     * @param string|null $sourceAlias The key in the row under which the source results are found.
+     * Will use the source table alias if not provided.
      * @return array
      */
-    public function transformRow(array $row, string $nestKey, bool $joined, ?string $targetProperty = null): array
-    {
-        $sourceAlias = $this->getSource()->getAlias();
+    public function transformRow(
+        array $row,
+        string $nestKey,
+        bool $joined,
+        ?string $targetProperty = null,
+        ?string $sourceAlias = null,
+    ): array {
+        $sourceAlias = $sourceAlias ?: $this->getSource()->getAlias();
         $nestKey = $nestKey ?: $this->_name;
         $targetProperty = $targetProperty ?: $this->getProperty();
         if (isset($row[$sourceAlias])) {
@@ -828,11 +848,13 @@ abstract class Association
      * @param array<string, mixed> $row The row to set a default on.
      * @param bool $joined Whether the row is a result of a direct join
      *   with this association
+     * @param string|null $sourceAlias The key in the row under which the source results are found.
+     * Will use the source table alias if not provided.
      * @return array<string, mixed>
      */
-    public function defaultRowValue(array $row, bool $joined): array
+    public function defaultRowValue(array $row, bool $joined, ?string $sourceAlias = null): array
     {
-        $sourceAlias = $this->getSource()->getAlias();
+        $sourceAlias = $sourceAlias ?: $this->getSource()->getAlias();
         if (isset($row[$sourceAlias])) {
             $row[$sourceAlias][$this->getProperty()] = null;
         }
@@ -995,8 +1017,150 @@ abstract class Association
             }
         }
 
-        $query->select($query->aliasFields($fields, $this->_name));
-        $query->addDefaultTypes($this->getTarget());
+        $alias = $options['alias'] ?? $this->_name;
+        $aliasMap = $this->_aliasMap($query, $surrogate, $options);
+        if ($aliasMap) {
+            $rewritten = [];
+            foreach ($fields as $key => $field) {
+                if (is_string($field)) {
+                    $field = $this->_rewriteIdentifier($field, $aliasMap);
+                } elseif ($field instanceof ExpressionInterface) {
+                    $this->_rewriteAliases($field, $aliasMap);
+                }
+                if (is_int($key)) {
+                    $rewritten[] = $field;
+                    continue;
+                }
+                // Already aliased fields (`Alias__field`) need their alias rewritten too.
+                $pos = strpos($key, '__');
+                if ($pos > 0 && isset($aliasMap[substr($key, 0, $pos)])) {
+                    $key = $aliasMap[substr($key, 0, $pos)] . substr($key, $pos);
+                }
+                $rewritten[$key] = $field;
+            }
+            $fields = $rewritten;
+        }
+
+        $query->select($query->aliasFields($fields, $alias));
+        $query->addDefaultTypes($this->getTarget(), $alias);
+    }
+
+    /**
+     * Returns a map of table aliases that need to be rewritten in conditions and
+     * fields built against the target table, when the association is attached
+     * to a query under a different alias than the target table one.
+     *
+     * When the query uses deep association aliases, associations contained in
+     * the surrogate query that will be joined are mapped as well, as they are
+     * attached to `$query` under an alias derived from their full path.
+     *
+     * The returned array maps the original alias to the alias used in the query.
+     * An empty array is returned when no rewriting is needed.
+     *
+     * @param \Cake\ORM\Query\SelectQuery<\Cake\Datasource\EntityInterface|array> $query the query the association is attached to
+     * @param \Cake\ORM\Query\SelectQuery<\Cake\Datasource\EntityInterface|array> $surrogate the query built for the target table
+     * @param array<string, mixed> $options options passed to the method `attachTo`
+     * @return array<string, string>
+     */
+    protected function _aliasMap(SelectQuery $query, SelectQuery $surrogate, array $options): array
+    {
+        $map = [];
+        $targetAlias = $this->getTarget()->getAlias();
+        $alias = $options['alias'] ?? $this->_name;
+        if ($alias !== $targetAlias) {
+            $map[$targetAlias] = $alias;
+        }
+
+        $sourceTableAlias = $this->getSource()->getAlias();
+        $sourceAlias = $options['sourceAlias'] ?? $sourceTableAlias;
+        if ($sourceAlias !== $sourceTableAlias && $sourceTableAlias !== $targetAlias) {
+            $map[$sourceTableAlias] = $sourceAlias;
+        }
+
+        if (!$query->getEagerLoader()->isDeepAssociationsEnabled()) {
+            return $map;
+        }
+
+        $loader = $surrogate->getEagerLoader();
+        if (!$loader->getContain() && !$loader->getMatching()) {
+            return $map;
+        }
+
+        foreach ($loader->attachableAssociations($this->getTarget()) as $nestedAlias => $loadable) {
+            $map[$nestedAlias] = EagerLoader::deepAlias($alias . '.' . $loadable->aliasPath());
+        }
+
+        return $map;
+    }
+
+    /**
+     * Rewrites the table alias prefix of a `Alias.field` identifier
+     * according to the passed alias map.
+     *
+     * @param string $identifier The identifier to rewrite.
+     * @param array<string, string> $aliasMap Map of original aliases to query aliases.
+     * @return string
+     */
+    protected function _rewriteIdentifier(string $identifier, array $aliasMap): string
+    {
+        $pos = strpos($identifier, '.');
+        if ($pos === false) {
+            return $identifier;
+        }
+        $prefix = substr($identifier, 0, $pos);
+        if (!isset($aliasMap[$prefix])) {
+            return $identifier;
+        }
+
+        return $aliasMap[$prefix] . substr($identifier, $pos);
+    }
+
+    /**
+     * Rewrites all the field identifiers found in an expression tree so that
+     * references to the aliases in `$aliasMap` keys use the corresponding values.
+     *
+     * Sub-queries are left untouched as they carry their own table aliases.
+     *
+     * @param \Cake\Database\ExpressionInterface $expression The expression to rewrite.
+     * @param array<string, string> $aliasMap Map of original aliases to query aliases.
+     * @return void
+     */
+    protected function _rewriteAliases(ExpressionInterface $expression, array $aliasMap): void
+    {
+        if (!$aliasMap) {
+            return;
+        }
+
+        $rewrite = function (mixed $expression, ?string $clause = null) use ($aliasMap): void {
+            // Query::traverse() passes its clauses (with the clause name) instead of
+            // nested expressions. Sub-queries keep their own aliases, skip them.
+            if ($clause !== null || !$expression instanceof ExpressionInterface) {
+                return;
+            }
+
+            if ($expression instanceof IdentifierExpression) {
+                $expression->setIdentifier($this->_rewriteIdentifier($expression->getIdentifier(), $aliasMap));
+
+                return;
+            }
+
+            if ($expression instanceof FieldInterface) {
+                $field = $expression->getField();
+                if (is_string($field)) {
+                    $expression->setField($this->_rewriteIdentifier($field, $aliasMap));
+                } elseif (is_array($field)) {
+                    foreach ($field as $k => $f) {
+                        if (is_string($f)) {
+                            $field[$k] = $this->_rewriteIdentifier($f, $aliasMap);
+                        }
+                    }
+                    $expression->setField($field);
+                }
+            }
+        };
+
+        $rewrite($expression);
+        $expression->traverse($rewrite);
     }
 
     /**
@@ -1113,8 +1277,8 @@ abstract class Association
     protected function _joinCondition(array $options): array
     {
         $conditions = [];
-        $tAlias = $this->_name;
-        $sAlias = $this->getSource()->getAlias();
+        $tAlias = $options['alias'] ?? $this->_name;
+        $sAlias = $options['sourceAlias'] ?? $this->getSource()->getAlias();
         $foreignKey = (array)$options['foreignKey'];
         $bindingKey = (array)$this->getBindingKey();
 

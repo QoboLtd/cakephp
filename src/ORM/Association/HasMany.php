@@ -654,9 +654,9 @@ class HasMany extends Association
     /**
      * @inheritDoc
      */
-    public function defaultRowValue(array $row, bool $joined): array
+    public function defaultRowValue(array $row, bool $joined, ?string $sourceAlias = null): array
     {
-        $sourceAlias = $this->getSource()->getAlias();
+        $sourceAlias = $sourceAlias ?: $this->getSource()->getAlias();
         if (isset($row[$sourceAlias])) {
             $row[$sourceAlias][$this->getProperty()] = $joined ? null : [];
         }
@@ -687,7 +687,7 @@ class HasMany extends Association
     {
         $loader = new SelectLoader([
             'alias' => $this->getAlias(),
-            'sourceAlias' => $this->getSource()->getAlias(),
+            'sourceAlias' => $options['sourceAlias'] ?? $this->getSource()->getAlias(),
             'targetAlias' => $this->getTarget()->getAlias(),
             'foreignKey' => $this->getForeignKey(),
             'bindingKey' => $this->getBindingKey(),

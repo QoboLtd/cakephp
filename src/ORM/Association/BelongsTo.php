@@ -164,7 +164,7 @@ class BelongsTo extends Association
     {
         $loader = new SelectLoader([
             'alias' => $this->getAlias(),
-            'sourceAlias' => $this->getSource()->getAlias(),
+            'sourceAlias' => $options['sourceAlias'] ?? $this->getSource()->getAlias(),
             'targetAlias' => $this->getTarget()->getAlias(),
             'foreignKey' => $this->getForeignKey(),
             'bindingKey' => $this->getBindingKey(),
