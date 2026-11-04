@@ -232,9 +232,9 @@ class BelongsToMany extends Association
     /**
      * @inheritDoc
      */
-    public function defaultRowValue(array $row, bool $joined): array
+    public function defaultRowValue(array $row, bool $joined, ?string $sourceAlias = null): array
     {
-        $sourceAlias = $this->getSource()->getAlias();
+        $sourceAlias = $sourceAlias ?: $this->getSource()->getAlias();
         if (isset($row[$sourceAlias])) {
             $row[$sourceAlias][$this->getProperty()] = $joined ? null : [];
         }
@@ -476,8 +476,21 @@ class BelongsToMany extends Association
         }
 
         $junction = $this->junction();
+        $alias = $options['alias'] ?? $this->_name;
+        $sourceAlias = $options['sourceAlias'] ?? $this->getSource()->getAlias();
+        $junctionAlias = $junction->getAlias();
+        if ($alias !== $this->_name) {
+            // The association is joined with a path based alias (deep associations),
+            // the junction table needs a matching unique alias as well.
+            $junctionAlias = $sourceAlias . '_' . $junctionAlias;
+        }
+
         $belongsTo = $junction->getAssociation($this->getSource()->getAlias());
-        $cond = $belongsTo->_joinCondition(['foreignKey' => $belongsTo->getForeignKey()]);
+        $cond = $belongsTo->_joinCondition([
+            'foreignKey' => $belongsTo->getForeignKey(),
+            'alias' => $sourceAlias,
+            'sourceAlias' => $junctionAlias,
+        ]);
         $cond += $this->junctionConditions();
 
         $includeFields = $options['includeFields'] ?? null;
@@ -489,17 +502,23 @@ class BelongsToMany extends Association
             'conditions' => $cond,
             'includeFields' => $includeFields,
             'foreignKey' => false,
+            'alias' => $junctionAlias,
+            'sourceAlias' => $alias,
         ];
         $assoc->attachTo($query, $newOptions);
-        $query->getEagerLoader()->addToJoinsMap($junction->getAlias(), $assoc, true);
+        $query->getEagerLoader()->addToJoinsMap($junctionAlias, $assoc, true);
 
         parent::attachTo($query, $options);
 
         $foreignKey = $this->getTargetForeignKey();
-        $thisJoin = $query->clause('join')[$this->getName()];
+        $thisJoin = $query->clause('join')[$alias];
         /** @var \Cake\Database\Expression\QueryExpression $conditions */
         $conditions = $thisJoin['conditions'];
-        $conditions->add($assoc->_joinCondition(['foreignKey' => $foreignKey]));
+        $conditions->add($assoc->_joinCondition([
+            'foreignKey' => $foreignKey,
+            'alias' => $junctionAlias,
+            'sourceAlias' => $alias,
+        ]));
     }
 
     /**
@@ -515,7 +534,10 @@ class BelongsToMany extends Association
         $options['conditions'] ??= [];
         $junction = $this->junction();
         $belongsTo = $junction->getAssociation($this->getSource()->getAlias());
-        $conds = $belongsTo->_joinCondition(['foreignKey' => $belongsTo->getForeignKey()]);
+        $conds = $belongsTo->_joinCondition([
+            'foreignKey' => $belongsTo->getForeignKey(),
+            'alias' => $options['sourceAlias'] ?? $this->getSource()->getAlias(),
+        ]);
 
         $subquery = $this->find()
             ->select(array_values($conds))
@@ -575,7 +597,7 @@ class BelongsToMany extends Association
         $name = $this->_junctionAssociationName();
         $loader = new SelectWithPivotLoader([
             'alias' => $this->getAlias(),
-            'sourceAlias' => $this->getSource()->getAlias(),
+            'sourceAlias' => $options['sourceAlias'] ?? $this->getSource()->getAlias(),
             'targetAlias' => $this->getTarget()->getAlias(),
             'foreignKey' => $this->getForeignKey(),
             'bindingKey' => $this->getBindingKey(),
